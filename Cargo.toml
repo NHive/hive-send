@@ -1,0 +1,64 @@
+[package]
+name = "hive-send"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+
+# 加密和安全
+aes-gcm = "0.10.3"     # AES-GCM 加密算法
+rsa = "0.9.8"          # RSA 加密算法
+sha2 = "0.10.8"        # SHA-2 哈希算法
+rustls = "0.20.9"      # TLS 实现
+rustls-pemfile = "1.0" # PEM 文件处理
+rcgen = "0.11"         # 证书生成
+rand = "0.9.0"         # 随机数生成
+
+
+# 工具
+uuid = { version = "1.7.0", features = ["v4"] }        # UUID 生成
+serde = { version = "1.0.130", features = ["derive"] } # 序列化/反序列化
+serde_json = "1.0.140"                                 # JSON 处理
+thiserror = "2.0.12"                                   # 错误处理
+walkdir = "2.5.0"                                      # 目录遍历
+mime_guess = "2.0.5"                                   # MIME 类型推断
+hostname = "0.4.0"                                     # 主机名获取
+glob = "0.3.2"                                         # 文件匹配模式
+dashmap = "6.1.0"                                      # 线程安全的 HashMap
+bytes = { version = "1.2", features = ["serde"] }      # 字节处理
+futures = "0.3.28"                                     # 异步编程
+
+# 异步运行时
+tokio = { version = "1", features = ["full"] }             # 异步运行时
+async-trait = "0.1"
+tokio-stream = { version = "0.1.17", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["io"] }        # 文件流支持
+
+# Web 框架
+axum = { version = "0.8.1", features = ["macros"] }              # Axum 框架
+axum-server = { version = "0.6", features = ["tls-rustls"] }     # Axum 服务器
+tower-http = { version = "0.5", features = ["trace"] }           # HTTP 中间件
+axum-extra = { version = "0.10.0", features = ["typed-header"] }
+http-body-util = "0.1"                                           # HTTP 主体工具
+
+# HTTP 客户端
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls", # 使用 rustls 进行 TLS
+    "json",       # JSON 支持
+    "gzip",       # Gzip 压缩
+    "brotli",     # Brotli 压缩
+    "multipart",  # 多部分表单
+    "stream",     # 流式传输
+    "http2",      # HTTP/2 支持
+] }
+
+# ===== 日志系统 =====
+log = "0.4.26" # 日志接口
+
+
+[dev-dependencies]
+env_logger = "0.10" # 环境变量控制的日志
+tempfile = "3.19.0" # 临时文件处理
