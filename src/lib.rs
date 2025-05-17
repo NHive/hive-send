@@ -36,10 +36,17 @@ pub trait TransferService: Sync + Send {
     ///
     /// # 参数
     /// * `request_id` - 请求ID
+    /// * `save_path` - 保存路径
+    /// * `exclusion_list` - 排除的文件列表(file_id)
     ///
     /// # 返回
     /// * `Result<()>` - 操作成功或错误
-    async fn accept_transfer_request(&self, request_id: &str, save_path: &str) -> Result<()>;
+    async fn accept_transfer_request(
+        &self,
+        request_id: &str,
+        save_path: &str,
+        exclusion_list: Vec<String>,
+    ) -> Result<()>;
 
     /// 拒绝传输请求 接收方->发送方
     ///
@@ -75,22 +82,6 @@ pub trait TransferService: Sync + Send {
     /// # 返回
     /// * `Result<TransferStatusResponse>` - 请求状态或错误
     async fn get_request_status(&self, request_id: &str) -> Result<TransferStatusResponse>;
-
-    /// 开始文件下载
-    ///
-    /// # 参数
-    /// * `request_id` - 请求ID
-    /// * `file_id` - 文件ID
-    /// * `save_path` - 保存路径
-    ///
-    /// # 返回
-    /// * `Result<()>` - 操作成功或错误
-    async fn start_file_download(
-        &self,
-        request_id: &str,
-        file_id: &str,
-        save_path: &str,
-    ) -> Result<()>;
 
     /// 暂停文件下载(仅对接收方有效)
     ///
@@ -226,13 +217,13 @@ pub trait TransferService: Sync + Send {
     async fn scan_device(&self, sender_address: &str, port: u16) -> Result<DeviceInfo>;
 
     /// 获取待发送文件列表
-    /// 
+    ///
     /// # 返回
     /// * `Result<Vec<PendingSendFileInfo>>` - 待发送文件列表或错误
     async fn get_pending_send_files(&self) -> Result<Vec<PendingSendFileInfo>>;
 
     /// 获取待接收文件列表
-    /// 
+    ///
     /// # 返回
     /// * `Result<Vec<PendingReceiveFileInfo>>` - 待接收文件列表或错误  
     async fn get_pending_receive_files(&self) -> Result<Vec<PendingReceiveFileInfo>>;

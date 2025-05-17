@@ -278,7 +278,7 @@ async fn accept_transfer(
     let service = &state.transfer_service;
 
     match service
-        .accept_transfer_request(&request_id, "~/Download")
+        .accept_transfer_request(&request_id, "~/Download", Vec::new())
         .await
     {
         Ok(_) => Json(ApiResponse {

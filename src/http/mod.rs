@@ -214,7 +214,12 @@ impl TransferService for HttpTransferService {
         return Ok(response);
     }
 
-    async fn accept_transfer_request(&self, request_id: &str, save_path: &str) -> Result<()> {
+    async fn accept_transfer_request(
+        &self,
+        request_id: &str,
+        save_path: &str,
+        exclusion_list: Vec<String>,
+    ) -> Result<()> {
         debug!("接受传输请求: {}", request_id);
 
         // 更新请求状态
@@ -231,6 +236,12 @@ impl TransferService for HttpTransferService {
         // 添加需要接收的文件到待接收列表
         if let Some(request) = self.pending_requests.get(request_id) {
             for file in &request.files {
+                // 检查排除列表
+                if exclusion_list.contains(&file.file_id) {
+                    continue;
+                }
+
+                // 检查文件路径是否存在
                 let pending_file_info = PendingReceiveFileInfo {
                     device_id: send_device_id.clone(),
                     file_id: file.file_id.clone(),
@@ -298,23 +309,6 @@ impl TransferService for HttpTransferService {
     async fn get_request_status(&self, request_id: &str) -> Result<TransferStatusResponse> {
         // 基本实现，后续完善
         Err(HiveDropError::NotFoundError("请求状态不可用".to_string()))
-    }
-
-    async fn start_file_download(
-        &self,
-        request_id: &str,
-        file_id: &str,
-        save_path: &str,
-    ) -> Result<()> {
-        debug!(
-            "开始文件下载: 请求ID={}, 文件ID={}, 保存路径={}",
-            request_id, file_id, save_path
-        );
-
-        // 这里可以实现文件下载逻辑
-        // 创建HTTP客户端，请求下载等
-
-        Ok(())
     }
 
     async fn pause_file_download(&self, request_id: &str, file_id: &str) -> Result<()> {
