@@ -132,7 +132,6 @@ pub trait TransferService: Sync + Send {
     /// # 参数
     /// * `request_id` - 请求ID
     /// * `file_id` - 文件ID
-    /// * `calculated_hash` - 计算的哈希值
     ///
     /// # 返回
     /// * `Result<VerifyResponse>` - 验证结果或错误
@@ -140,7 +139,6 @@ pub trait TransferService: Sync + Send {
         &self,
         request_id: &str,
         file_id: &str,
-        calculated_hash: &str,
     ) -> Result<VerifyResponse>;
 
     /// 获取当前用户ID

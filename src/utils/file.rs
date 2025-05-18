@@ -1,8 +1,6 @@
 use log::{debug, info};
 use mime_guess::from_path;
-use sha2::{Digest, Sha256};
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -163,7 +161,6 @@ fn create_dir_info(path: &Path, base_path: &Path) -> Result<PendingSendFileInfo>
         file_relative_path: relative_path,
         file_absolute_path: absolute_path,
         file_size: 0,
-        file_hash: String::new(),                 // 目录没有哈希值
         mime_type: "inode/directory".to_string(), // 目录的MIME类型
         is_dir: true,
         progress: 0,
@@ -196,7 +193,6 @@ fn create_file_info(path: &Path, base_path: &Path) -> Result<PendingSendFileInfo
         .to_string_lossy()
         .to_string();
 
-    let file_hash = calculate_file_hash(path)?;
     let mime_type = from_path(path).first_or_octet_stream().to_string();
 
     Ok(PendingSendFileInfo {
@@ -205,37 +201,16 @@ fn create_file_info(path: &Path, base_path: &Path) -> Result<PendingSendFileInfo
         file_relative_path: relative_path,
         file_absolute_path: absolute_path,
         file_size,
-        file_hash,
         mime_type,
         is_dir: false,
         progress: 0,
     })
 }
 
-/// 计算文件的 SHA-256 哈希值
-fn calculate_file_hash(path: &Path) -> Result<String> {
-    debug!("计算文件哈希: {}", path.display());
-    let mut file = File::open(path).map_err(|e| HiveDropError::IoError(e))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0; 16384]; // 16KB 缓冲区
-
-    loop {
-        let bytes_read = file
-            .read(&mut buffer)
-            .map_err(|e| HiveDropError::IoError(e))?;
-        if bytes_read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..bytes_read]);
-    }
-
-    let hash = hasher.finalize();
-    Ok(format!("{:x}", hash))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
 

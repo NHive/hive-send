@@ -26,7 +26,6 @@ pub struct DownloadTask {
     pub device_id: String,
     pub save_path: PathBuf,
     pub file_size: u64,
-    pub file_hash: String,
     pub is_dir: bool,
     pub start_offset: u64,
 }
@@ -288,12 +287,6 @@ impl DownloadManager {
         })
         .await?;
 
-        // 验证文件完整性
-        if bytes_received == metadata.content_length {
-            // 如果文件下载完成，验证哈希
-            self.verify_file(&task).await?;
-        }
-
         Ok(())
     }
 
@@ -310,47 +303,6 @@ impl DownloadManager {
             .await?;
 
         Ok(metadata)
-    }
-
-    // 验证文件完整性
-    async fn verify_file(&self, task: &DownloadTask) -> Result<bool> {
-        // 调用服务的验证方法
-        let verify_response = self
-            .service
-            .verify_file(&task.request_id, &task.file_id, &task.file_hash)
-            .await?;
-
-        if verify_response.is_valid {
-            debug!(
-                "文件验证通过: request_id={}, file_id={}",
-                task.request_id, task.file_id
-            );
-            self.update_progress(ProgressUpdate {
-                request_id: task.request_id.clone(),
-                file_id: task.file_id.clone(),
-                bytes_received: task.file_size,
-                status: TransferStatus::Verified,
-                error_message: None,
-                speed: 0, // 验证通过时速度为0
-            })
-            .await?;
-            Ok(true)
-        } else {
-            warn!(
-                "文件验证失败: request_id={}, file_id={}",
-                task.request_id, task.file_id
-            );
-            self.update_progress(ProgressUpdate {
-                request_id: task.request_id.clone(),
-                file_id: task.file_id.clone(),
-                bytes_received: task.file_size,
-                status: TransferStatus::Failed,
-                error_message: Some("文件验证失败，哈希值不匹配".to_string()),
-                speed: 0, // 验证失败时速度为0
-            })
-            .await?;
-            Ok(false)
-        }
     }
 
     // 处理下载任务队列
@@ -401,12 +353,11 @@ impl DownloadManager {
                     );
 
                     tasks.push(DownloadTask {
-                        request_id: file.device_id.clone(), // 使用device_id作为request_id
+                        request_id: file.device_id.clone(),
                         file_id: file.file_id.clone(),
                         device_id: file.device_id.clone(),
                         save_path,
                         file_size: file.file_size,
-                        file_hash: file.file_hash.clone(),
                         is_dir: file.is_dir,
                         start_offset: file.progress,
                     });

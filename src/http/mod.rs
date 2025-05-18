@@ -197,11 +197,8 @@ impl TransferService for HttpTransferService {
         device_id: &str,
     ) -> Result<TransferRequestResponse> {
         // 单路径请求直接调用多路径方法
-        self.create_transfer_request_by_paths(
-            vec![file_path.to_string()], 
-            device_id, 
-            None
-        ).await
+        self.create_transfer_request_by_paths(vec![file_path.to_string()], device_id, None)
+            .await
     }
 
     async fn create_transfer_request_by_paths(
@@ -212,12 +209,12 @@ impl TransferService for HttpTransferService {
     ) -> Result<TransferRequestResponse> {
         let request_id = uuid::Uuid::new_v4().to_string();
         let mut all_files = Vec::new();
-        
+
         // 处理所有提供的文件路径
         for file_path in file_paths {
             debug!("处理路径: {}", file_path);
             let path_files = path_to_transfer_structure(&file_path, excluded_patterns.clone())?;
-            
+
             // 添加该路径的所有文件到总列表
             for file in path_files {
                 self.sent_files.insert(file.file_id.clone(), file.clone());
@@ -226,7 +223,7 @@ impl TransferService for HttpTransferService {
         }
 
         debug!("共处理 {} 个文件/目录", all_files.len());
-        
+
         if all_files.is_empty() {
             return Err(HiveDropError::ValidationError(
                 "没有找到有效文件可发送".to_string(),
@@ -238,10 +235,7 @@ impl TransferService for HttpTransferService {
             sender_device_id: self.config.device_id.clone(),
             sender_device_name: self.config.device_name.clone(),
             receiver_device_id: device_id.to_string(),
-            files: all_files
-                .iter()
-                .map(|file| file.to_file_info())
-                .collect(),
+            files: all_files.iter().map(|file| file.to_file_info()).collect(),
         };
 
         // 添加请求到已发送请求列表
@@ -299,7 +293,6 @@ impl TransferService for HttpTransferService {
                     // 保存路径+相对路径
                     file_absolute_path: format!("{}/{}", save_path, file.file_path),
                     file_size: file.file_size,
-                    file_hash: file.file_hash.clone(),
                     mime_type: file.mime_type.clone(),
                     is_dir: file.is_dir,
                     progress: 0,
@@ -392,23 +385,12 @@ impl TransferService for HttpTransferService {
         Ok(())
     }
 
-    async fn verify_file(
-        &self,
-        request_id: &str,
-        file_id: &str,
-        calculated_hash: &str,
-    ) -> Result<VerifyResponse> {
-        debug!(
-            "验证文件: 请求ID={}, 文件ID={}, 哈希={}",
-            request_id, file_id, calculated_hash
-        );
+    async fn verify_file(&self, request_id: &str, file_id: &str) -> Result<VerifyResponse> {
+        debug!("验证文件: 请求ID={}, 文件ID={}", request_id, file_id);
 
         // 验证文件的逻辑
 
-        Ok(VerifyResponse {
-            is_valid: true, // 假设验证通过
-            original_hash: calculated_hash.to_string(),
-        })
+        Ok(VerifyResponse { is_valid: true })
     }
 
     fn get_user_id(&self) -> String {

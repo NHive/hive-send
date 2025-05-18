@@ -74,8 +74,6 @@ pub struct TransferStatusResponse {
 pub struct VerifyResponse {
     /// 文件是否有效
     pub is_valid: bool,
-    /// 原始哈希值
-    pub original_hash: String,
 }
 
 /// 实现方:(发送方)

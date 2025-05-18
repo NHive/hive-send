@@ -43,12 +43,6 @@ async fn handle_file_metadata(
         let filename = format!("attachment; filename=\"{}\"", file_info.file_name);
         headers.insert(header::CONTENT_DISPOSITION, filename.parse().unwrap());
 
-        // 设置ETag (使用文件哈希)
-        headers.insert(
-            header::ETAG,
-            format!("\"{}\"", file_info.file_hash).parse().unwrap(),
-        );
-
         // 设置接受范围请求
         headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
 

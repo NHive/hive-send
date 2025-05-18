@@ -84,8 +84,6 @@ pub enum TransferStatus {
     Completed,  // 已完成
     Failed,     // 失败
     Cancelled,  // 已取消
-    Verifying,  // 验证中
-    Verified,   // 已验证
 }
 
 /// 设备信息结构体 - 用于设备发现功能
@@ -171,7 +169,6 @@ pub struct PendingSendFileInfo {
     pub file_relative_path: String, // 相对路径
     pub file_absolute_path: String, // 绝对路径
     pub file_size: u64,             // 文件大小（字节）
-    pub file_hash: String,          // 文件哈希值
     pub mime_type: String,          // MIME类型
     pub is_dir: bool,               // 是否是目录
     pub progress: u64,              // 传输进度（字节）
@@ -185,7 +182,6 @@ impl PendingSendFileInfo {
             file_name: self.file_name.clone(),
             file_path: self.file_relative_path.clone(),
             file_size: self.file_size,
-            file_hash: self.file_hash.clone(),
             mime_type: self.mime_type.clone(),
             is_dir: self.is_dir,
         }
@@ -201,7 +197,6 @@ pub struct PendingReceiveFileInfo {
     pub file_relative_path: String, // 相对路径
     pub file_absolute_path: String, // 绝对路径
     pub file_size: u64,             // 文件大小（字节）
-    pub file_hash: String,          // 文件哈希值
     pub mime_type: String,          // MIME类型
     pub is_dir: bool,               // 是否是目录
     pub progress: u64,              // 传输进度（字节）

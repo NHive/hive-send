@@ -8,7 +8,6 @@ pub struct FileInfo {
     pub file_name: String, // 文件名
     pub file_path: String, // 相对路径
     pub file_size: u64,    // 文件大小（字节）
-    pub file_hash: String, // 文件哈希值
     pub mime_type: String, // MIME类型
     pub is_dir: bool,      // 是否是目录
 }
