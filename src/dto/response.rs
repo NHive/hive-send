@@ -38,6 +38,8 @@ pub struct DeviceStatusInfo {
     pub is_online: bool,
     /// 设备应用版本
     pub version: String,
+    /// 服务端口
+    pub port: u16,
 }
 
 /// 实现方:(接收方)

@@ -93,6 +93,7 @@ impl HttpTransferService {
             discovery_level: self.config.discovery_level.clone(),
             is_online: self.is_service_running().await,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            port: self.config.server_port,
         }
     }
 
@@ -536,9 +537,12 @@ impl TransferService for HttpTransferService {
         // 创建HTTP客户端
         let client = client::HttpClient::new()?;
 
-        // 直接使用异步方法获取设备状态
+        // 获取本地设备状态
+        let local_status = self.get_device_status().await;
+
+        // 使用POST方法发送本地设备状态并获取对方设备状态
         let device_status = client
-            .check_status(sender_address, port)
+            .check_status(sender_address, port, local_status)
             .await
             .map_err(|e| HiveDropError::NetworkError(format!("扫描设备失败: {}", e)))?;
 
