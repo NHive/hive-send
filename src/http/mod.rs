@@ -1,4 +1,5 @@
 pub mod client;
+pub mod download_manage;
 pub mod server;
 
 use async_trait::async_trait;
@@ -30,6 +31,8 @@ pub struct HttpTransferService {
     known_devices: Arc<DashMap<String, DeviceInfo>>,
     /// 服务器实例管理器
     server_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// 下载管理器句柄
+    download_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// 已接收到的传输请求缓存(request_id -> TransferRequest),待处理或者未处理完毕的请求
     pending_requests: Arc<DashMap<String, TransferRequest>>,
     /// 已发送成功的传输请求缓存(request_id -> TransferRequest),待对方确认或者未处理完毕的请求
@@ -51,6 +54,7 @@ impl HttpTransferService {
             is_running: Arc::new(Mutex::new(false)),
             known_devices: Arc::new(DashMap::new()),
             server_handle: Arc::new(Mutex::new(None)),
+            download_handle: Arc::new(Mutex::new(None)),
             pending_requests: Arc::new(DashMap::new()),
             sent_requests: Arc::new(DashMap::new()),
             sent_files: Arc::new(DashMap::new()),
@@ -166,6 +170,22 @@ impl HttpTransferService {
 
         Ok(())
     }
+
+    /// 添加需要接收的文件到待接收列表
+    pub async fn add_pending_receive_file(&self, file_info: PendingReceiveFileInfo) -> Result<()> {
+        // 检查是否已存在相同ID的文件
+        if self.received_files.contains_key(&file_info.file_id) {
+            return Err(HiveDropError::ValidationError(
+                "接收文件ID已存在".to_string(),
+            ));
+        }
+
+        // 添加文件到待接收列表
+        self.received_files
+            .insert(file_info.file_id.clone(), file_info);
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -252,8 +272,9 @@ impl TransferService for HttpTransferService {
                     file_size: file.file_size,
                     file_hash: file.file_hash.clone(),
                     mime_type: file.mime_type.clone(),
-                    is_dir: false,
+                    is_dir: file.is_dir,
                     progress: 0,
+                    status: TransferStatus::Accepted,
                 };
                 self.received_files
                     .insert(file.file_id.clone(), pending_file_info);
@@ -304,11 +325,6 @@ impl TransferService for HttpTransferService {
             .collect();
 
         Ok(sent_list)
-    }
-
-    async fn get_request_status(&self, request_id: &str) -> Result<TransferStatusResponse> {
-        // 基本实现，后续完善
-        Err(HiveDropError::NotFoundError("请求状态不可用".to_string()))
     }
 
     async fn pause_file_download(&self, request_id: &str, file_id: &str) -> Result<()> {
@@ -428,12 +444,23 @@ impl TransferService for HttpTransferService {
 
         info!("正在启动 HTTP 传输服务...");
         // 启动 HTTP 服务器，传递服务实例的Arc
-        let service: Arc<HttpTransferService> = Arc::new(self.clone());
+        let service_for_server: Arc<HttpTransferService> = Arc::new(self.clone());
         {
             let mut server_handle = self.server_handle.lock().unwrap();
             *server_handle = Some(tokio::spawn(async move {
-                if let Err(e) = server::start(service).await {
+                if let Err(e) = server::start(service_for_server).await {
                     error!("HTTP 服务器启动失败: {:?}", e);
+                }
+            }));
+        }
+
+        // 启动下载管理器
+        let service_for_download: Arc<HttpTransferService> = Arc::new(self.clone());
+        {
+            let mut download_handle = self.download_handle.lock().unwrap();
+            *download_handle = Some(tokio::spawn(async move {
+                if let Err(e) = download_manage::start(service_for_download).await {
+                    error!("下载管理器启动失败: {:?}", e);
                 }
             }));
         }
@@ -459,6 +486,13 @@ impl TransferService for HttpTransferService {
         if let Some(handle) = server_handle.take() {
             handle.abort();
             debug!("HTTP 服务器任务已中止");
+        }
+
+        // 停止下载管理器
+        let mut download_handle = self.download_handle.lock().unwrap();
+        if let Some(handle) = download_handle.take() {
+            handle.abort();
+            debug!("下载管理器任务已中止");
         }
 
         self.send_event(TransferEvent::ServiceStopped);

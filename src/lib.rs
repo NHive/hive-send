@@ -74,15 +74,6 @@ pub trait TransferService: Sync + Send {
     /// * `Result<Vec<TransferRequest>>` - 已发送请求列表或错误
     async fn get_sent_requests(&self) -> Result<Vec<TransferRequest>>;
 
-    /// 刷新特定请求的状态(发送方主动向接收方查询)
-    ///
-    /// # 参数
-    /// * `request_id` - 请求ID
-    ///
-    /// # 返回
-    /// * `Result<TransferStatusResponse>` - 请求状态或错误
-    async fn get_request_status(&self, request_id: &str) -> Result<TransferStatusResponse>;
-
     /// 暂停文件下载(仅对接收方有效)
     ///
     /// # 参数

@@ -12,7 +12,9 @@ impl HttpClient {
         sender_address: &str,
         port: u16,
     ) -> Result<FileMetadata> {
-        let url = format!("https://{}:{}/file/{}", sender_address, port, file_id);
+        let url = format!("https://{}:{}/api/file/{}", sender_address, port, file_id);
+
+        println!("请求文件元数据: {}", url);
 
         let response = self
             .client
@@ -37,11 +39,32 @@ impl HttpClient {
                 .unwrap_or("application/octet-stream")
                 .to_string();
 
+            // 从Content-Disposition头中提取文件名
             let filename = headers
-                .get("filename")
+                .get("content-disposition")
                 .and_then(|v| v.to_str().ok())
-                .ok_or_else(|| HiveDropError::NetworkError("缺少Filename头".to_string()))?
-                .to_string();
+                .and_then(|v| {
+                    // 解析 "attachment; filename="example.txt"" 格式
+                    let parts: Vec<&str> = v.split(';').collect();
+                    for part in parts {
+                        let part = part.trim();
+                        if part.starts_with("filename=") {
+                            // 提取文件名并去除引号
+                            return Some(
+                                part.strip_prefix("filename=")
+                                    .unwrap_or("")
+                                    .trim_matches('"')
+                                    .to_string(),
+                            );
+                        }
+                    }
+                    None
+                })
+                .ok_or_else(|| {
+                    HiveDropError::NetworkError(
+                        "无法从Content-Disposition头中提取文件名".to_string(),
+                    )
+                })?;
 
             Ok(FileMetadata {
                 content_length,
@@ -64,7 +87,9 @@ impl HttpClient {
         sender_address: &str,
         port: u16,
     ) -> Result<Vec<u8>> {
-        let url = format!("https://{}:{}/file/{}", sender_address, port, file_id);
+        let url = format!("https://{}:{}/api/file/{}", sender_address, port, file_id);
+
+        println!("请求文件元数据: {}", url);
 
         let mut request = self.client.get(&url);
 

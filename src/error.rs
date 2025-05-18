@@ -67,4 +67,11 @@ impl From<&str> for HiveDropError {
     }
 }
 
+// 添加reqwest错误的转换实现
+impl From<reqwest::Error> for HiveDropError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::NetworkError(error.to_string())
+    }
+}
+
 pub type Result<T> = std::result::Result<T, HiveDropError>;

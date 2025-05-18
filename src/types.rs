@@ -74,7 +74,7 @@ pub enum TransferEvent {
 }
 
 /// 传输状态枚举 - 表示单个文件传输的状态
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum TransferStatus {
     Pending,    // 等待中
     Accepted,   // 已接受
@@ -192,6 +192,7 @@ impl PendingSendFileInfo {
     }
 }
 
+/// 待接收文件信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingReceiveFileInfo {
     pub device_id: String,          // 发送方设备ID
@@ -204,4 +205,5 @@ pub struct PendingReceiveFileInfo {
     pub mime_type: String,          // MIME类型
     pub is_dir: bool,               // 是否是目录
     pub progress: u64,              // 传输进度（字节）
+    pub status: TransferStatus,     // 传输状态
 }
