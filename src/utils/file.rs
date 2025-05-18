@@ -27,6 +27,14 @@ pub fn path_to_transfer_structure<P: AsRef<Path>>(
 
     info!("开始处理路径: {}", path.display());
 
+    // 检查路径是否存在
+    if !path.exists() {
+        return Err(HiveDropError::InvalidPath(format!(
+            "路径不存在: {}",
+            path.display()
+        )));
+    }
+
     // 设置glob模式匹配器（如果提供了排除模式）
     let excludes = if let Some(patterns) = excluded_patterns {
         let mut matchers = Vec::new();

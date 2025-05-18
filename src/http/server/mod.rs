@@ -7,7 +7,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::ConnectInfo;
 use axum_server::tls_rustls::RustlsConfig;
 use log::info;
 use tower_http::trace::TraceLayer;

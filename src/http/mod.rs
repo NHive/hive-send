@@ -196,15 +196,49 @@ impl TransferService for HttpTransferService {
         file_path: &str,
         device_id: &str,
     ) -> Result<TransferRequestResponse> {
+        // 单路径请求直接调用多路径方法
+        self.create_transfer_request_by_paths(
+            vec![file_path.to_string()], 
+            device_id, 
+            None
+        ).await
+    }
+
+    async fn create_transfer_request_by_paths(
+        &self,
+        file_paths: Vec<String>,
+        device_id: &str,
+        excluded_patterns: Option<Vec<String>>,
+    ) -> Result<TransferRequestResponse> {
         let request_id = uuid::Uuid::new_v4().to_string();
-        let pending_file_info = path_to_transfer_structure(file_path, None)?;
+        let mut all_files = Vec::new();
+        
+        // 处理所有提供的文件路径
+        for file_path in file_paths {
+            debug!("处理路径: {}", file_path);
+            let path_files = path_to_transfer_structure(&file_path, excluded_patterns.clone())?;
+            
+            // 添加该路径的所有文件到总列表
+            for file in path_files {
+                self.sent_files.insert(file.file_id.clone(), file.clone());
+                all_files.push(file);
+            }
+        }
+
+        debug!("共处理 {} 个文件/目录", all_files.len());
+        
+        if all_files.is_empty() {
+            return Err(HiveDropError::ValidationError(
+                "没有找到有效文件可发送".to_string(),
+            ));
+        }
 
         let request = TransferRequest {
             request_id: request_id.clone(),
             sender_device_id: self.config.device_id.clone(),
             sender_device_name: self.config.device_name.clone(),
             receiver_device_id: device_id.to_string(),
-            files: pending_file_info
+            files: all_files
                 .iter()
                 .map(|file| file.to_file_info())
                 .collect(),
@@ -213,12 +247,6 @@ impl TransferService for HttpTransferService {
         // 添加请求到已发送请求列表
         self.add_sent_request(request.clone()).await?;
 
-        // 添加文件信息到待发送列表
-        for file in pending_file_info {
-            self.sent_files.insert(file.file_id.clone(), file.clone());
-        }
-
-        // 发送请求给接收方
         // 获取接收方的地址和端口
         let receiver_info = self
             .get_device_info(device_id)
@@ -232,7 +260,7 @@ impl TransferService for HttpTransferService {
             .await
             .map_err(|e| HiveDropError::NetworkError(format!("发送请求失败: {}", e)))?;
 
-        return Ok(response);
+        Ok(response)
     }
 
     async fn accept_transfer_request(
