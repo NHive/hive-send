@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::SeekFrom;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -7,7 +8,7 @@ use log::{debug, error, info, warn};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::{Semaphore, mpsc};
-use tokio::time::sleep;
+use tokio::time::{interval, sleep};
 
 use crate::TransferService;
 use crate::dto::request::TransferProgress;
@@ -38,6 +39,16 @@ struct ProgressUpdate {
     bytes_received: u64,
     status: TransferStatus,
     error_message: Option<String>,
+    speed: u64, // 添加速度字段
+}
+
+// 速度统计结构体
+#[derive(Clone)]
+struct SpeedStat {
+    file_id: String,
+    bytes_last_second: u64,
+    last_updated: Instant,
+    bytes_history: VecDeque<u64>, // 保存最近几秒的字节数，用于计算平均速度
 }
 
 // 下载管理器
@@ -46,6 +57,8 @@ pub struct DownloadManager {
     http_client: HttpClient,
     progress_sender: mpsc::Sender<ProgressUpdate>,
     semaphore: Arc<Semaphore>,
+    // 记录活动下载的速度统计数据
+    speed_stats: Arc<tokio::sync::Mutex<std::collections::HashMap<String, SpeedStat>>>,
 }
 
 impl DownloadManager {
@@ -64,6 +77,7 @@ impl DownloadManager {
                 http_client,
                 progress_sender,
                 semaphore,
+                speed_stats: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             },
             progress_receiver,
         )
@@ -98,6 +112,7 @@ impl DownloadManager {
                 bytes_received: 0,
                 status: TransferStatus::Completed,
                 error_message: None,
+                speed: 0, // 下载完成时速度为0
             })
             .await?;
             info!("已成功创建目录: {}", task.save_path.display());
@@ -148,13 +163,28 @@ impl DownloadManager {
             bytes_received: offset,
             status: TransferStatus::InProgress,
             error_message: None,
+            speed: 0, // 初始速度为0
         })
         .await?;
 
         // 下载进度变量
         let mut bytes_received = offset;
-        let mut last_update = Instant::now();
+        let mut last_progress_update = Instant::now();
         let progress_interval = Duration::from_millis(500); // 每500毫秒更新一次进度
+
+        // 初始化速度统计
+        {
+            let mut stats = self.speed_stats.lock().await;
+            stats.insert(
+                task.file_id.clone(),
+                SpeedStat {
+                    file_id: task.file_id.clone(),
+                    bytes_last_second: 0,
+                    last_updated: Instant::now(),
+                    bytes_history: VecDeque::with_capacity(5), // 保存5秒的历史数据
+                },
+            );
+        }
 
         // 使用分块下载
         while bytes_received < metadata.content_length {
@@ -177,19 +207,45 @@ impl DownloadManager {
             file.write_all(&chunk).await?;
 
             // 更新已接收的字节数
-            bytes_received += chunk.len() as u64;
+            let chunk_size = chunk.len() as u64;
+            bytes_received += chunk_size;
+
+            // 更新速度统计
+            {
+                let mut stats = self.speed_stats.lock().await;
+                if let Some(stat) = stats.get_mut(&task.file_id) {
+                    stat.bytes_last_second += chunk_size;
+                }
+            }
 
             // 定期更新进度
-            if last_update.elapsed() >= progress_interval {
+            if last_progress_update.elapsed() >= progress_interval {
+                // 获取当前速度
+                let current_speed = {
+                    let stats = self.speed_stats.lock().await;
+                    stats
+                        .get(&task.file_id)
+                        .map(|stat| {
+                            if stat.bytes_history.is_empty() {
+                                stat.bytes_last_second
+                            } else {
+                                stat.bytes_history.iter().sum::<u64>()
+                                    / stat.bytes_history.len() as u64
+                            }
+                        })
+                        .unwrap_or(0)
+                };
+
                 self.update_progress(ProgressUpdate {
                     request_id: task.request_id.clone(),
                     file_id: task.file_id.clone(),
                     bytes_received,
                     status: TransferStatus::InProgress,
                     error_message: None,
+                    speed: current_speed, // 包含速度信息
                 })
                 .await?;
-                last_update = Instant::now();
+                last_progress_update = Instant::now();
             }
         }
 
@@ -215,6 +271,12 @@ impl DownloadManager {
             }
         }
 
+        // 清理速度统计数据
+        {
+            let mut stats = self.speed_stats.lock().await;
+            stats.remove(&task.file_id);
+        }
+
         // 发送最终进度更新
         self.update_progress(ProgressUpdate {
             request_id: task.request_id.clone(),
@@ -222,6 +284,7 @@ impl DownloadManager {
             bytes_received,
             status: TransferStatus::Completed,
             error_message: None,
+            speed: 0, // 下载完成时速度为0
         })
         .await?;
 
@@ -268,6 +331,7 @@ impl DownloadManager {
                 bytes_received: task.file_size,
                 status: TransferStatus::Verified,
                 error_message: None,
+                speed: 0, // 验证通过时速度为0
             })
             .await?;
             Ok(true)
@@ -282,6 +346,7 @@ impl DownloadManager {
                 bytes_received: task.file_size,
                 status: TransferStatus::Failed,
                 error_message: Some("文件验证失败，哈希值不匹配".to_string()),
+                speed: 0, // 验证失败时速度为0
             })
             .await?;
             Ok(false)
@@ -291,6 +356,30 @@ impl DownloadManager {
     // 处理下载任务队列
     async fn process_download_queue(self: Arc<Self>) -> Result<()> {
         info!("下载队列处理器已启动");
+
+        // 启动每秒更新速度统计数据的任务
+        let speed_reporter = Arc::clone(&self);
+        tokio::spawn(async move {
+            let mut interval = interval(Duration::from_secs(1));
+            loop {
+                interval.tick().await;
+
+                // 获取并更新每个下载的速度
+                let mut stats = speed_reporter.speed_stats.lock().await;
+                for (_file_id, stat) in stats.iter_mut() {
+                    // 添加到历史数据
+                    stat.bytes_history.push_back(stat.bytes_last_second);
+                    if stat.bytes_history.len() > 5 {
+                        // 保持5秒的历史
+                        stat.bytes_history.pop_front();
+                    }
+
+                    // 重置本秒接收的字节数
+                    stat.bytes_last_second = 0;
+                    stat.last_updated = Instant::now();
+                }
+            }
+        });
 
         // 定期检查是否有新的下载任务
         loop {
@@ -387,6 +476,7 @@ impl DownloadManager {
             bytes_received: progress.bytes_received,
             status: format!("{:?}", progress.status),
             error_message: progress.error_message.clone(),
+            speed: progress.speed, // 添加速度信息
         };
 
         // 发送进度更新
@@ -395,7 +485,6 @@ impl DownloadManager {
             .await?;
 
         // 同时通过通道发送进度更新，用于内部处理
-        // 先发送progress避免使用已移动的值
         if let Err(e) = self.progress_sender.send(progress.clone()).await {
             warn!("发送进度更新失败: {}", e);
         }

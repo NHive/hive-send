@@ -59,6 +59,9 @@ pub struct TransferProgress {
     /// 可选的错误信息
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    /// 传输速度（字节/秒）
+    #[serde(default)]
+    pub speed: u64,
 }
 
 /// 实现方:(发送方, 接收方)
