@@ -116,7 +116,8 @@ impl HttpClient {
             .await
             .map_err(|e| HiveDropError::NetworkError(format!("进度报告发送失败: {}", e)))?;
 
-        if response.status() == StatusCode::OK {
+        // 修改此处检查状态码，服务器返回204 No Content
+        if response.status() == StatusCode::NO_CONTENT || response.status() == StatusCode::OK {
             Ok(())
         } else {
             Err(HiveDropError::NetworkError(format!(
@@ -143,43 +144,12 @@ impl HttpClient {
             .await
             .map_err(|e| HiveDropError::NetworkError(format!("取消传输请求发送失败: {}", e)))?;
 
-        if response.status() == StatusCode::OK {
+        // 修改此处检查状态码，服务器返回204 No Content
+        if response.status() == StatusCode::NO_CONTENT || response.status() == StatusCode::OK {
             Ok(())
         } else {
             Err(HiveDropError::NetworkError(format!(
                 "取消传输失败，状态码: {}",
-                response.status()
-            )))
-        }
-    }
-
-    /// 验证文件
-    pub async fn verify_file(
-        &self,
-        verify: &TransferVerify,
-        sender_address: &str,
-        port: u16,
-    ) -> Result<VerifyResponse> {
-        let url = format!("https://{}:{}/api/transfer/verify", sender_address, port);
-
-        let response = self
-            .client
-            .post(&url)
-            .json(verify)
-            .send()
-            .await
-            .map_err(|e| HiveDropError::NetworkError(format!("文件验证请求发送失败: {}", e)))?;
-
-        if response.status() == StatusCode::OK {
-            let verify_response = response
-                .json::<VerifyResponse>()
-                .await
-                .map_err(|e| HiveDropError::NetworkError(format!("解析文件验证响应失败: {}", e)))?;
-
-            Ok(verify_response)
-        } else {
-            Err(HiveDropError::NetworkError(format!(
-                "文件验证失败，状态码: {}",
                 response.status()
             )))
         }

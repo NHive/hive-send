@@ -33,10 +33,12 @@ pub struct HttpTransferService {
     server_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// 下载管理器句柄
     download_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+
     /// 已接收到的传输请求缓存(request_id -> TransferRequest),待处理或者未处理完毕的请求
     pending_requests: Arc<DashMap<String, TransferRequest>>,
     /// 已发送成功的传输请求缓存(request_id -> TransferRequest),待对方确认或者未处理完毕的请求
     sent_requests: Arc<DashMap<String, TransferRequest>>,
+
     /// 待发送文件列表(file_id -> PendingSendFileInfo),待发送的文件信息
     sent_files: Arc<DashMap<String, PendingSendFileInfo>>,
     /// 待接收文件列表(file_id -> PendingReceiveFileInfo),待接收的文件信息
@@ -46,7 +48,7 @@ pub struct HttpTransferService {
 impl HttpTransferService {
     /// 创建新的 HTTP 传输服务
     pub async fn new(config: TransferServiceConfig) -> Self {
-        let (sender, _) = broadcast::channel(100); // 创建容量为100的广播通道
+        let (sender, _) = broadcast::channel(100);
 
         Self {
             config,
@@ -55,8 +57,10 @@ impl HttpTransferService {
             known_devices: Arc::new(DashMap::new()),
             server_handle: Arc::new(Mutex::new(None)),
             download_handle: Arc::new(Mutex::new(None)),
+
             pending_requests: Arc::new(DashMap::new()),
             sent_requests: Arc::new(DashMap::new()),
+
             sent_files: Arc::new(DashMap::new()),
             received_files: Arc::new(DashMap::new()),
         }
@@ -103,13 +107,16 @@ impl HttpTransferService {
     }
 
     /// 添加新接收到的传输请求到缓存
-    pub async fn add_pending_request(&self, request: TransferRequest) -> Result<()> {
+    pub async fn add_pending_request(&self, mut request: TransferRequest) -> Result<()> {
         // 检查是否已存在相同ID的请求
         if self.pending_requests.contains_key(&request.request_id) {
             return Err(HiveDropError::ValidationError(
                 "传输请求ID已存在".to_string(),
             ));
         }
+
+        // 设置初始状态为pending
+        request.status = "pending".to_string();
 
         // 添加请求并发送事件
         self.pending_requests
@@ -120,13 +127,16 @@ impl HttpTransferService {
     }
 
     /// 添加已发送的传输请求到缓存
-    pub async fn add_sent_request(&self, request: TransferRequest) -> Result<()> {
+    pub async fn add_sent_request(&self, mut request: TransferRequest) -> Result<()> {
         // 检查是否已存在相同ID的请求
         if self.sent_requests.contains_key(&request.request_id) {
             return Err(HiveDropError::ValidationError(
                 "传输请求ID已存在".to_string(),
             ));
         }
+
+        // 设置初始状态为pending
+        request.status = "pending".to_string();
 
         // 添加请求到缓存
         self.sent_requests
@@ -142,7 +152,11 @@ impl HttpTransferService {
         status: TransferStatus,
         message: Option<String>,
     ) -> Result<()> {
-        if let Some(_request_entry) = self.pending_requests.get_mut(request_id) {
+        // 检查pending_requests中是否存在该请求
+        if let Some(mut request_entry) = self.pending_requests.get_mut(request_id) {
+            // 更新状态
+            request_entry.status = format!("{:?}", status).to_lowercase();
+
             // 发送状态变更事件
             self.send_event(TransferEvent::RequestStatusChanged {
                 request_id: request_id.to_string(),
@@ -150,13 +164,28 @@ impl HttpTransferService {
                 message: message.clone(),
             });
 
-            Ok(())
-        } else {
-            Err(HiveDropError::NotFoundError(format!(
-                "找不到传输请求: {}",
-                request_id
-            )))
+            return Ok(());
         }
+
+        // 检查sent_requests中是否存在该请求
+        if let Some(mut request_entry) = self.sent_requests.get_mut(request_id) {
+            // 更新状态
+            request_entry.status = format!("{:?}", status).to_lowercase();
+
+            // 发送状态变更事件
+            self.send_event(TransferEvent::RequestStatusChanged {
+                request_id: request_id.to_string(),
+                status: format!("{:?}", status),
+                message: message.clone(),
+            });
+
+            return Ok(());
+        }
+
+        Err(HiveDropError::NotFoundError(format!(
+            "找不到传输请求: {}",
+            request_id
+        )))
     }
 
     /// 获取设备信息（如果没有则返回None）
@@ -236,6 +265,7 @@ impl TransferService for HttpTransferService {
             sender_device_name: self.config.device_name.clone(),
             receiver_device_id: device_id.to_string(),
             files: all_files.iter().map(|file| file.to_file_info()).collect(),
+            status: "pending".to_string(),
         };
 
         // 添加请求到已发送请求列表
@@ -286,6 +316,7 @@ impl TransferService for HttpTransferService {
 
                 // 检查文件路径是否存在
                 let pending_file_info = PendingReceiveFileInfo {
+                    request_id: request_id.to_string(),
                     device_id: send_device_id.clone(),
                     file_id: file.file_id.clone(),
                     file_name: file.file_name.clone(),

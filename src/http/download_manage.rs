@@ -105,6 +105,19 @@ impl DownloadManager {
         // 如果是目录，只需创建目录
         if task.is_dir {
             tokio::fs::create_dir_all(&task.save_path).await?;
+
+            // 向发送方报告目录创建完成
+            self.report_progress_to_sender(
+                &task.request_id,
+                &task.file_id,
+                0,
+                TransferStatus::Completed,
+                None,
+                0,
+                &device_info,
+            )
+            .await?;
+
             self.update_progress(ProgressUpdate {
                 request_id: task.request_id.clone(),
                 file_id: task.file_id.clone(),
@@ -173,7 +186,9 @@ impl DownloadManager {
         // 下载进度变量
         let mut bytes_received = offset;
         let mut last_progress_update = Instant::now();
-        let progress_interval = Duration::from_millis(500); // 每500毫秒更新一次进度
+        let mut last_sender_report = Instant::now();
+        let progress_interval = Duration::from_millis(500); // 每500毫秒更新一次本地进度
+        let sender_report_interval = Duration::from_secs(2); // 每2秒向发送方报告一次进度
 
         // 初始化速度统计
         {
@@ -250,6 +265,43 @@ impl DownloadManager {
                 .await?;
                 last_progress_update = Instant::now();
             }
+
+            // 定期向发送方报告进度
+            if last_sender_report.elapsed() >= sender_report_interval {
+                // 获取当前速度用于报告
+                let current_speed = {
+                    let stats = self.speed_stats.lock().await;
+                    stats
+                        .get(&task.file_id)
+                        .map(|stat| {
+                            if stat.bytes_history.is_empty() {
+                                stat.bytes_last_second
+                            } else {
+                                stat.bytes_history.iter().sum::<u64>()
+                                    / stat.bytes_history.len() as u64
+                            }
+                        })
+                        .unwrap_or(0)
+                };
+
+                // 向发送方报告进度
+                self.report_progress_to_sender(
+                    &task.request_id,
+                    &task.file_id,
+                    bytes_received,
+                    TransferStatus::InProgress,
+                    None,
+                    current_speed,
+                    &device_info,
+                )
+                .await?;
+
+                last_sender_report = Instant::now();
+                debug!(
+                    "已向发送方 {} 报告文件 {} 的下载进度: {} 字节，速度 {} 字节/秒",
+                    device_info.device_id, task.file_id, bytes_received, current_speed
+                );
+            }
         }
 
         // 确保文件被完全写入
@@ -279,6 +331,18 @@ impl DownloadManager {
             let mut stats = self.speed_stats.lock().await;
             stats.remove(&task.file_id);
         }
+
+        // 向发送方报告下载完成
+        self.report_progress_to_sender(
+            &task.request_id,
+            &task.file_id,
+            bytes_received,
+            TransferStatus::Completed,
+            None,
+            0,
+            &device_info,
+        )
+        .await?;
 
         // 发送最终进度更新
         self.update_progress(ProgressUpdate {
@@ -343,8 +407,29 @@ impl DownloadManager {
 
         // 定期检查是否有新的下载任务
         loop {
-            // 获取所有待接收的文件
-            let files = self.service.get_pending_receive_files().await?;
+            // 获取所有待接收的文件，添加超时处理
+            let files = match tokio::time::timeout(
+                Duration::from_secs(5),
+                self.service.get_pending_receive_files(),
+            )
+            .await
+            {
+                Ok(result) => match result {
+                    Ok(files) => files,
+                    Err(e) => {
+                        error!("获取待接收文件失败: {}", e);
+                        // 短暂延迟后继续
+                        sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                },
+                Err(_) => {
+                    warn!("获取待接收文件超时，将在1秒后重试");
+                    sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+
             let mut tasks = Vec::new();
 
             // 找出所有已接受但还未开始下载的文件
@@ -361,7 +446,7 @@ impl DownloadManager {
                     );
 
                     tasks.push(DownloadTask {
-                        request_id: file.device_id.clone(),
+                        request_id: file.request_id.clone(),
                         file_id: file.file_id.clone(),
                         device_id: file.device_id.clone(),
                         save_path,
@@ -378,51 +463,95 @@ impl DownloadManager {
                 }
             }
 
-            // 为每个任务启动下载
-            for task in tasks {
-                // 克隆必要的引用
-                let self_clone = Arc::clone(&self);
-                let semaphore = Arc::clone(&self.semaphore);
+            // 为每个任务启动下载，限制同时启动的数量避免资源耗尽
+            let max_concurrent_starts = 3;
+            for chunk in tasks.chunks(max_concurrent_starts) {
+                let mut futures = Vec::new();
 
-                // 使用信号量限制并发下载数量
-                tokio::spawn(async move {
-                    // 获取信号量许可
-                    let permit = match semaphore.acquire().await {
-                        Ok(permit) => permit,
-                        Err(e) => {
-                            error!("获取信号量失败: {}", e);
-                            return;
-                        }
-                    };
+                for task in chunk {
+                    // 克隆必要的引用
+                    let self_clone = Arc::clone(&self);
+                    let semaphore = Arc::clone(&self.semaphore);
+                    let task = task.clone();
 
-                    info!(
-                        "开始下载文件: id={}, path={}",
-                        task.file_id,
-                        task.save_path.display()
-                    );
+                    // 将任务封装在一个有超时的异步块中
+                    let future = tokio::spawn(async move {
+                        // 获取信号量许可，添加超时
+                        let permit = match tokio::time::timeout(
+                            Duration::from_secs(10),
+                            semaphore.acquire(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(permit)) => permit,
+                            Ok(Err(e)) => {
+                                error!("获取信号量失败: {}", e);
+                                return;
+                            }
+                            Err(_) => {
+                                error!("获取信号量超时");
+                                return;
+                            }
+                        };
 
-                    // 执行下载
-                    if let Err(e) = self_clone.start_download(task.clone()).await {
-                        error!(
-                            "下载任务失败: request_id={}, file_id={}, error={}",
-                            task.request_id, task.file_id, e
+                        info!(
+                            "开始下载文件: id={}, path={}",
+                            task.file_id,
+                            task.save_path.display()
                         );
 
-                        // 更新文件状态为失败
-                        if let Some(mut file_entry) =
-                            self_clone.service.received_files.get_mut(&task.file_id)
+                        // 执行下载，添加超时保护
+                        match tokio::time::timeout(
+                            Duration::from_secs(3600), // 1小时超时
+                            self_clone.start_download(task.clone()),
+                        )
+                        .await
                         {
-                            file_entry.status = TransferStatus::Failed;
-                        }
-                    }
+                            Ok(Ok(_)) => {
+                                info!("文件下载成功: {}", task.file_id);
+                            }
+                            Ok(Err(e)) => {
+                                error!(
+                                    "下载任务失败: request_id={}, file_id={}, error={}",
+                                    task.request_id, task.file_id, e
+                                );
 
-                    // 释放信号量许可（当permit被丢弃时自动释放）
-                    drop(permit);
-                });
+                                // 更新文件状态为失败
+                                if let Some(mut file_entry) =
+                                    self_clone.service.received_files.get_mut(&task.file_id)
+                                {
+                                    file_entry.status = TransferStatus::Failed;
+                                }
+                            }
+                            Err(_) => {
+                                error!(
+                                    "下载任务超时: request_id={}, file_id={}",
+                                    task.request_id, task.file_id
+                                );
+                                // 更新文件状态为失败
+                                if let Some(mut file_entry) =
+                                    self_clone.service.received_files.get_mut(&task.file_id)
+                                {
+                                    file_entry.status = TransferStatus::Failed;
+                                }
+                            }
+                        }
+
+                        // 释放信号量许可
+                        drop(permit);
+                    });
+
+                    futures.push(future);
+                }
+
+                // 等待当前批次的任务都启动完成
+                for future in futures {
+                    let _ = future.await;
+                }
             }
 
-            // 等待一段时间后再检查新任务
-            sleep(Duration::from_secs(1)).await;
+            // 使用短暂延迟减轻CPU负担
+            sleep(Duration::from_millis(500)).await;
         }
     }
 
@@ -433,9 +562,9 @@ impl DownloadManager {
             request_id: progress.request_id.clone(),
             file_id: progress.file_id.clone(),
             bytes_received: progress.bytes_received,
-            status: format!("{:?}", progress.status),
+            status: progress.status.clone(),
             error_message: progress.error_message.clone(),
-            speed: progress.speed, // 添加速度信息
+            speed: progress.speed,
         };
 
         // 发送进度更新
@@ -455,6 +584,96 @@ impl DownloadManager {
         }
 
         Ok(())
+    }
+
+    // 向发送方报告进度的新方法
+    async fn report_progress_to_sender(
+        &self,
+        request_id: &str,
+        file_id: &str,
+        bytes_received: u64,
+        status: TransferStatus,
+        error_message: Option<String>,
+        speed: u64,
+        device_info: &DeviceInfo,
+    ) -> Result<()> {
+        // 构建进度报告
+        let progress = TransferProgress {
+            request_id: request_id.to_string(),
+            file_id: file_id.to_string(),
+            bytes_received,
+            status: status.clone(),
+            error_message,
+            speed,
+        };
+
+        info!(
+            "正在向发送方 {}:{} 报告进度: 文件={}, 进度={}/{}, 状态={:?}",
+            device_info.address[0],
+            device_info.port,
+            file_id,
+            bytes_received,
+            "未知总大小",
+            progress.status
+        );
+
+        // 重试机制
+        let max_retries = 3;
+        let mut retry_count = 0;
+        let mut last_error = None;
+
+        while retry_count < max_retries {
+            // 添加超时限制
+            match tokio::time::timeout(
+                Duration::from_secs(5),
+                self.http_client.report_progress(
+                    &progress,
+                    &device_info.address[0],
+                    device_info.port,
+                ),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {
+                    debug!(
+                        "成功向发送方报告进度: 文件={}, 状态={:?}",
+                        file_id, progress.status
+                    );
+                    return Ok(());
+                }
+                Ok(Err(e)) => {
+                    warn!(
+                        "向发送方报告进度失败 (尝试 {}/{}): {}",
+                        retry_count + 1,
+                        max_retries,
+                        e
+                    );
+                    last_error = Some(e);
+                }
+                Err(_) => {
+                    warn!(
+                        "向发送方报告进度超时 (尝试 {}/{})",
+                        retry_count + 1,
+                        max_retries
+                    );
+                    last_error = Some(HiveDropError::NetworkError(
+                        "向发送方报告进度超时".to_string(),
+                    ));
+                }
+            }
+
+            retry_count += 1;
+
+            if retry_count < max_retries {
+                // 等待一段时间后重试
+                tokio::time::sleep(Duration::from_millis(500 * retry_count as u64)).await;
+            }
+        }
+
+        // 所有重试都失败
+        Err(last_error.unwrap_or_else(|| {
+            HiveDropError::NetworkError("向发送方报告进度失败，达到最大重试次数".to_string())
+        }))
     }
 }
 

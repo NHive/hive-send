@@ -68,15 +68,6 @@ pub struct TransferStatusResponse {
 }
 
 /// 实现方:(发送方)
-/// 接收方接收完文件后, 将文件的hash值发送给发送方, 发送方验证文件是否完整
-/// 文件验证响应 - POST /api/transfer/verify 的响应
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VerifyResponse {
-    /// 文件是否有效
-    pub is_valid: bool,
-}
-
-/// 实现方:(发送方)
 /// 接收方在下载文件前, 先请求文件的元数据信息, 用于获取文件大小、哈希值等
 /// 文件元数据信息（用于HEAD请求的响应头）
 #[derive(Debug, Clone)]

@@ -191,6 +191,7 @@ impl PendingSendFileInfo {
 /// 待接收文件信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingReceiveFileInfo {
+    pub request_id: String,         // 传输请求ID
     pub device_id: String,          // 发送方设备ID
     pub file_id: String,            // 文件唯一标识符
     pub file_name: String,          // 文件名

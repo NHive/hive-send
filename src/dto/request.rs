@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::types;
+
 /// 实现方:(发送方)
 /// 文件传输请求中的单个文件信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +29,8 @@ pub struct TransferRequest {
     pub receiver_device_id: String,
     /// 要传输的文件列表
     pub files: Vec<FileInfo>,
+    /// 请求状态
+    pub status: String,
 }
 
 /// 实现方:(接收方)
@@ -53,8 +57,8 @@ pub struct TransferProgress {
     pub file_id: String,
     /// 已接收字节数
     pub bytes_received: u64,
-    /// 传输状态：in_progress（进行中）、completed（已完成）、cancel(已取消) 或failed（失败）
-    pub status: String,
+    /// 传输状态
+    pub status: types::TransferStatus,
     /// 可选的错误信息
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
@@ -72,15 +76,4 @@ pub struct TransferCancel {
     pub request_id: String,
     /// 取消原因：user_cancelled（用户取消）、error（错误）或timeout（超时）
     pub reason: String,
-}
-
-/// 实现方:(接收方)
-/// 接收方接收完文件后,通知发送方接收完成
-/// 文件验证请求 - POST /api/transfer/verify
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransferVerify {
-    /// 对应请求的ID
-    pub request_id: String,
-    /// 文件ID
-    pub file_id: String,
 }
