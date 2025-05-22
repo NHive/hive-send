@@ -385,14 +385,6 @@ impl TransferService for HttpTransferService {
         Ok(())
     }
 
-    async fn verify_file(&self, request_id: &str, file_id: &str) -> Result<VerifyResponse> {
-        debug!("验证文件: 请求ID={}, 文件ID={}", request_id, file_id);
-
-        // 验证文件的逻辑
-
-        Ok(VerifyResponse { is_valid: true })
-    }
-
     fn get_user_id(&self) -> String {
         self.config.user_id.clone()
     }

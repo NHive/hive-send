@@ -127,20 +127,6 @@ pub trait TransferService: Sync + Send {
     /// * `reason` - 取消原因
     async fn cancel_file_send(&self, request_id: &str, reason: &str) -> Result<()>;
 
-    /// 验证文件完整性
-    ///
-    /// # 参数
-    /// * `request_id` - 请求ID
-    /// * `file_id` - 文件ID
-    ///
-    /// # 返回
-    /// * `Result<VerifyResponse>` - 验证结果或错误
-    async fn verify_file(
-        &self,
-        request_id: &str,
-        file_id: &str,
-    ) -> Result<VerifyResponse>;
-
     /// 获取当前用户ID
     ///
     /// # 返回

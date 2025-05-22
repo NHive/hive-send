@@ -115,6 +115,10 @@ impl DownloadManager {
             })
             .await?;
             info!("已成功创建目录: {}", task.save_path.display());
+
+            // 从received_files中移除该目录
+            self.service.received_files.remove(&task.file_id);
+
             return Ok(());
         }
 
@@ -286,6 +290,10 @@ impl DownloadManager {
             speed: 0, // 下载完成时速度为0
         })
         .await?;
+
+        // 从received_files中移除已完成的文件
+        self.service.received_files.remove(&task.file_id);
+        info!("文件 {} 已完成下载,从待接收列表中移除", task.file_id);
 
         Ok(())
     }

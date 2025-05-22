@@ -121,45 +121,148 @@ async fn handle_transfer_response(
     }
 }
 
-/// 处理传输进度报告
+/// 处理传输进度报告(发送方实现接口,接收方主动调用接口传输进度给发送方)
 #[axum::debug_handler]
 async fn handle_transfer_progress(
-    State(_): State<Arc<HttpTransferService>>,
+    State(service): State<Arc<HttpTransferService>>,
     Json(progress): Json<TransferProgress>,
 ) -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ApiResponse::<()>::error(
-            "传输进度处理功能尚未实现".to_string(),
-        )),
-    )
-        .into_response()
+    // 检查请求ID是否存在于已发送的请求列表中
+    if !service.sent_requests.contains_key(&progress.request_id) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<()>::error(format!(
+                "找不到请求ID: {}",
+                progress.request_id
+            ))),
+        )
+            .into_response();
+    }
+
+    // 检查文件ID是否存在于待发送文件列表中
+    if let Some(mut file_info) = service.sent_files.get_mut(&progress.file_id) {
+        // 更新文件进度
+        file_info.progress = progress.bytes_received;
+
+        // 根据状态进行相应处理
+        match progress.status.as_str() {
+            "in_progress" => {
+                // 更新传输进度
+                if let Err(e) = service.update_transfer_progress(progress.clone()).await {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiResponse::<()>::error(format!("更新传输进度失败: {}", e))),
+                    )
+                        .into_response();
+                }
+            }
+            "completed" => {
+                // 文件传输完成
+                service.send_event(crate::types::TransferEvent::TransferCompleted {
+                    request_id: progress.request_id.clone(),
+                    file_id: progress.file_id.clone(),
+                    save_path: None,
+                });
+
+                // 传输完成后,从发送列表移除
+                service.sent_files.remove(&progress.file_id);
+            }
+            "failed" => {
+                // 文件传输失败
+                service.send_event(crate::types::TransferEvent::TransferFailed {
+                    request_id: progress.request_id.clone(),
+                    file_id: progress.file_id.clone(),
+                    error: progress
+                        .error_message
+                        .unwrap_or_else(|| "未知错误".to_string()),
+                });
+            }
+            "cancel" => {
+                // 文件传输被取消
+                service.send_event(crate::types::TransferEvent::TransferCancelled {
+                    request_id: progress.request_id.clone(),
+                    reason: progress
+                        .error_message
+                        .unwrap_or_else(|| "接收方取消".to_string()),
+                });
+            }
+            _ => {
+                // 无效的状态
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<()>::error("无效的传输状态".to_string())),
+                )
+                    .into_response();
+            }
+        }
+
+        // 返回成功响应，使用204状态码表示已成功处理但无需返回内容
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        // 文件ID不存在
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<()>::error(format!(
+                "找不到文件ID: {}",
+                progress.file_id
+            ))),
+        )
+            .into_response()
+    }
 }
 
-/// 处理传输取消请求
-#[axum::debug_handler]
+/// 处理传输取消请求(发送方与接收方都需要实现,都可以通过该接口取消传输)
 async fn handle_transfer_cancel(
-    State(_): State<Arc<HttpTransferService>>,
+    State(service): State<Arc<HttpTransferService>>,
     Json(cancel): Json<TransferCancel>,
 ) -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ApiResponse::<()>::error("传输取消功能尚未实现".to_string())),
-    )
-        .into_response()
-}
+    // 检查请求ID是否存在
+    let request_exists = service.pending_requests.contains_key(&cancel.request_id)
+        || service.sent_requests.contains_key(&cancel.request_id);
 
-/// 处理文件验证请求
-#[axum::debug_handler]
-async fn handle_transfer_verify(
-    State(_): State<Arc<HttpTransferService>>,
-    Json(verify): Json<TransferVerify>,
-) -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ApiResponse::<()>::error("文件验证功能尚未实现".to_string())),
-    )
-        .into_response()
+    if !request_exists {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<()>::error(format!(
+                "找不到请求ID: {}",
+                cancel.request_id
+            ))),
+        )
+            .into_response();
+    }
+
+    // 检查是否是接收到的请求
+    if let Some(request) = service.pending_requests.get(&cancel.request_id) {
+        // 如果是接收到的请求，清理相关文件记录
+        for file in &request.files {
+            // 移除任何与此请求相关的待接收文件
+            service.received_files.remove(&file.file_id);
+        }
+
+        // 从待处理请求中移除
+        service.pending_requests.remove(&cancel.request_id);
+    }
+
+    // 检查是否是发送的请求
+    if let Some(request) = service.sent_requests.get(&cancel.request_id) {
+        // 如果是发送的请求，清理相关文件记录
+        for file in &request.files {
+            // 移除任何与此请求相关的待发送文件
+            service.sent_files.remove(&file.file_id);
+        }
+
+        // 从已发送请求中移除
+        service.sent_requests.remove(&cancel.request_id);
+    }
+
+    // 发送取消事件
+    service.send_event(crate::types::TransferEvent::TransferCancelled {
+        request_id: cancel.request_id.clone(),
+        reason: cancel.reason.clone(),
+    });
+
+    // 返回成功，无需内容
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// 注册传输相关路由
@@ -177,5 +280,4 @@ pub fn register() -> Router<Arc<HttpTransferService>> {
         // 接收下载方的进度报告
         .route("/api/transfer/progress", post(handle_transfer_progress))
         .route("/api/transfer/cancel", post(handle_transfer_cancel))
-        .route("/api/transfer/verify", post(handle_transfer_verify))
 }

@@ -75,7 +75,7 @@ pub struct TransferCancel {
 }
 
 /// 实现方:(接收方)
-/// 接收方接收完文件后, 将文件的hash值发送给发送方, 发送方验证文件是否完整
+/// 接收方接收完文件后,通知发送方接收完成
 /// 文件验证请求 - POST /api/transfer/verify
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferVerify {
@@ -83,6 +83,4 @@ pub struct TransferVerify {
     pub request_id: String,
     /// 文件ID
     pub file_id: String,
-    /// 计算出的哈希值
-    pub calculated_hash: String,
 }
