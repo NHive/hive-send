@@ -92,8 +92,6 @@ impl HttpTransferService {
     pub async fn get_device_status(&self) -> DeviceStatusInfo {
         DeviceStatusInfo {
             device_id: self.config.device_id.clone(),
-            device_name: self.config.device_name.clone(),
-            user_id: self.config.user_id.clone(),
             discovery_level: self.config.discovery_level.clone(),
             is_online: self.is_service_running().await,
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -262,7 +260,6 @@ impl TransferService for HttpTransferService {
         let request = TransferRequest {
             request_id: request_id.clone(),
             sender_device_id: self.config.device_id.clone(),
-            sender_device_name: self.config.device_name.clone(),
             receiver_device_id: device_id.to_string(),
             files: all_files.iter().map(|file| file.to_file_info()).collect(),
             status: "pending".to_string(),
@@ -416,30 +413,6 @@ impl TransferService for HttpTransferService {
         Ok(())
     }
 
-    fn get_user_id(&self) -> String {
-        self.config.user_id.clone()
-    }
-
-    async fn set_user_id(&self, user_id: &str) -> Result<()> {
-        let old_user_id = self.config.user_id.clone();
-
-        // 这里需要修改字段，使用unsafe绕过不可变性约束
-        unsafe {
-            let config_ptr =
-                &self.config as *const TransferServiceConfig as *mut TransferServiceConfig;
-            (*config_ptr).user_id = user_id.to_string();
-        }
-
-        // 发送事件
-        self.send_event(TransferEvent::UserIdChanged {
-            device_id: self.config.device_id.clone(),
-            old_user_id,
-            new_user_id: user_id.to_string(),
-        });
-
-        Ok(())
-    }
-
     fn get_discovery_level(&self) -> DiscoveryLevel {
         self.config.discovery_level.clone()
     }
@@ -579,15 +552,9 @@ impl TransferService for HttpTransferService {
             .await
             .map_err(|e| HiveDropError::NetworkError(format!("扫描设备失败: {}", e)))?;
 
-        debug!(
-            "发现设备: {} ({})",
-            device_status.device_name, device_status.device_id
-        );
-
         // 使用设备状态创建DeviceInfo
         let device_info = DeviceInfo {
             device_id: device_status.device_id.clone(),
-            device_name: device_status.device_name.clone(),
             address: vec![sender_address.to_string()],
             port,
             is_online: device_status.is_online,
@@ -610,7 +577,6 @@ impl TransferService for HttpTransferService {
             // 更新在线状态和其他信息
             existing_device.is_online = device_status.is_online;
             existing_device.version = device_status.version.clone();
-            existing_device.device_name = device_status.device_name.clone();
 
             // 复制一份用于事件发送
             let updated_device = existing_device.clone();
@@ -621,11 +587,6 @@ impl TransferService for HttpTransferService {
             // 返回更新后的设备
             Ok(updated_device)
         } else {
-            // 添加新设备
-            debug!(
-                "添加新设备: {} ({})",
-                device_info.device_name, device_info.device_id
-            );
             self.known_devices
                 .insert(device_status.device_id.clone(), device_info.clone());
 

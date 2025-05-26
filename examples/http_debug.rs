@@ -41,7 +41,6 @@ struct CreateRequestQuery {
 struct ServiceStatusResponse {
     running: bool,
     device_id: String,
-    device_name: String,
 }
 
 // 启动HTTP调试服务器
@@ -53,7 +52,6 @@ async fn start_debug_server() -> Result<(), Box<dyn std::error::Error>> {
 
     // 创建传输服务配置
     let config = TransferServiceConfig {
-        device_name: "Debug Device".to_string(),
         server_port: 6712,
         discovery_level: DiscoveryLevel::AllNearby,
         ..Default::default()
@@ -146,8 +144,7 @@ async fn get_service_status(
 
     let response = ServiceStatusResponse {
         running: is_running,
-        device_id: service.get_user_id(),
-        device_name: "Debug Device".to_string(), // 实际应用中应从配置获取
+        device_id: "device_id_placeholder".to_string(), // 这里可以替换为实际的设备ID
     };
 
     Json(ApiResponse {

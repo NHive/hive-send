@@ -127,21 +127,6 @@ pub trait TransferService: Sync + Send {
     /// * `reason` - 取消原因
     async fn cancel_file_send(&self, request_id: &str, reason: &str) -> Result<()>;
 
-    /// 获取当前用户ID
-    ///
-    /// # 返回
-    /// * `String` - 当前用户ID
-    fn get_user_id(&self) -> String;
-
-    /// 设置用户ID
-    ///
-    /// # 参数
-    /// * `user_id` - 新的用户ID
-    ///
-    /// # 返回
-    /// * `Result<()>` - 操作成功或错误
-    async fn set_user_id(&self, user_id: &str) -> Result<()>;
-
     /// 获取当前发现等级
     ///
     /// # 返回

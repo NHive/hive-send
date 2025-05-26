@@ -59,13 +59,6 @@ pub enum TransferEvent {
         level: DiscoveryLevel,
     },
 
-    /// 用户ID变更
-    UserIdChanged {
-        device_id: String,
-        old_user_id: String,
-        new_user_id: String,
-    },
-
     /// 设备状态更新
     DeviceUpdated(DeviceInfo),
 
@@ -91,8 +84,6 @@ pub enum TransferStatus {
 pub struct DeviceInfo {
     /// 设备ID
     pub device_id: String,
-    /// 设备名称
-    pub device_name: String,
     /// 设备地址
     pub address: Vec<String>,
     /// 设备端口
@@ -114,10 +105,6 @@ pub enum TransferImplementation {
 pub struct TransferServiceConfig {
     /// 本地设备ID
     pub device_id: String,
-    /// 本地设备名称
-    pub device_name: String,
-    /// 用户ID
-    pub user_id: String,
     /// 服务器监听端口
     pub server_port: u16,
     /// 最大并发传输数
@@ -142,11 +129,6 @@ impl Default for TransferServiceConfig {
     fn default() -> Self {
         Self {
             device_id: uuid::Uuid::new_v4().to_string(),
-            device_name: hostname::get()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string(),
-            user_id: uuid::Uuid::new_v4().to_string(),
             server_port: 61314,
             max_concurrent_transfers: 10,
             chunk_size: 10 * 1024 * 1024, // 10MB

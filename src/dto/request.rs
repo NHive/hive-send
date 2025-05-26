@@ -23,8 +23,6 @@ pub struct TransferRequest {
     pub request_id: String,
     /// 发送方设备ID
     pub sender_device_id: String,
-    /// 发送方设备名称
-    pub sender_device_name: String,
     /// 接收方设备ID
     pub receiver_device_id: String,
     /// 要传输的文件列表

@@ -2,11 +2,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     extract::{ConnectInfo, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 
 use crate::dto::response::DeviceStatusInfo;
@@ -35,7 +35,6 @@ async fn check_device_status(
     if !device_exists {
         let device_info = DeviceInfo {
             device_id: remote_status.device_id.clone(),
-            device_name: remote_status.device_name.clone(),
             address: vec![sender_ip],
             port: remote_status.port,
             is_online: remote_status.is_online,

@@ -28,10 +28,6 @@ impl std::fmt::Display for DiscoveryLevel {
 pub struct DeviceStatusInfo {
     /// 设备ID
     pub device_id: String,
-    /// 设备名称
-    pub device_name: String,
-    /// 设备所属用户ID
-    pub user_id: String,
     /// 设备发现等级
     pub discovery_level: DiscoveryLevel,
     /// 设备在线状态
