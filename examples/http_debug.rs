@@ -43,6 +43,11 @@ struct ServiceStatusResponse {
     device_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct SetExtraInfoRequest {
+    extra_info: Option<serde_json::Value>,
+}
+
 // 启动HTTP调试服务器
 async fn start_debug_server() -> Result<(), Box<dyn std::error::Error>> {
     // 设置日志
@@ -87,11 +92,13 @@ async fn start_debug_server() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/transfers/create", post(create_transfer_request))
         .route("/api/transfers/{request_id}/accept", post(accept_transfer))
         .route("/api/transfers/{request_id}/reject", post(reject_transfer))
-        .route("/api/transfers/send_files", get(get_pending_send_files)) // 新添加的路由
+        .route("/api/transfers/send_files", get(get_pending_send_files))
         .route(
             "/api/transfers/receive_files",
             get(get_pending_receive_files),
-        ) // 新添加的路由
+        )
+        .route("/api/extra_info", get(get_extra_info))
+        .route("/api/extra_info", post(set_extra_info))
         .with_state(app_state);
 
     // 定义debug服务器的监听地址
@@ -333,6 +340,37 @@ async fn get_pending_receive_files(
             message: None,
         }),
         Err(e) => Json(ApiResponse::error(format!("获取待接收文件列表失败: {}", e))),
+    }
+}
+
+// 获取额外信息
+async fn get_extra_info(
+    State(state): State<AppState>,
+) -> Json<ApiResponse<Option<serde_json::Value>>> {
+    let service = &state.transfer_service;
+    let extra_info = service.get_extra_info().await;
+
+    Json(ApiResponse {
+        success: true,
+        data: Some(extra_info),
+        message: None,
+    })
+}
+
+// 设置额外信息
+async fn set_extra_info(
+    State(state): State<AppState>,
+    Json(payload): Json<SetExtraInfoRequest>,
+) -> Json<ApiResponse<()>> {
+    let service = &state.transfer_service;
+
+    match service.set_extra_info(payload.extra_info).await {
+        Ok(_) => Json(ApiResponse {
+            success: true,
+            data: None,
+            message: Some("额外信息已设置".to_string()),
+        }),
+        Err(e) => Json(ApiResponse::error(format!("设置额外信息失败: {}", e))),
     }
 }
 

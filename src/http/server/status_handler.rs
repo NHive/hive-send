@@ -39,6 +39,7 @@ async fn check_device_status(
             port: remote_status.port,
             is_online: remote_status.is_online,
             version: remote_status.version.clone(),
+            extra_info: remote_status.extra_info.clone(),
         };
 
         // 添加设备并发送设备发现事件
@@ -46,6 +47,16 @@ async fn check_device_status(
             .known_devices
             .insert(remote_status.device_id.clone(), device_info.clone());
         service.send_event(crate::types::TransferEvent::DeviceDiscovered(device_info));
+    } else {
+        // 如果设备已存在，更新其extra_info
+        if let Some(mut existing_device) = service.known_devices.get_mut(&remote_status.device_id) {
+            existing_device.extra_info = remote_status.extra_info.clone();
+            existing_device.is_online = remote_status.is_online;
+            existing_device.version = remote_status.version.clone();
+
+            let updated_device = existing_device.clone();
+            service.send_event(crate::types::TransferEvent::DeviceUpdated(updated_device));
+        }
     }
 
     // 返回本地设备状态

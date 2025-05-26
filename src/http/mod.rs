@@ -5,6 +5,7 @@ pub mod server;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use log::{debug, error, info, warn};
+use serde_json::Value;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
@@ -23,6 +24,8 @@ use crate::utils::file::path_to_transfer_structure;
 pub struct HttpTransferService {
     /// 服务配置
     config: TransferServiceConfig,
+    /// 额外信息 (用户自定义JSON数据)
+    extra_info: Arc<Mutex<Option<Value>>>,
     /// 事件发送器
     event_sender: broadcast::Sender<TransferEvent>,
     /// 服务状态
@@ -52,6 +55,7 @@ impl HttpTransferService {
 
         Self {
             config,
+            extra_info: Arc::new(Mutex::new(None)),
             event_sender: sender,
             is_running: Arc::new(Mutex::new(false)),
             known_devices: Arc::new(DashMap::new()),
@@ -96,6 +100,7 @@ impl HttpTransferService {
             is_online: self.is_service_running().await,
             version: env!("CARGO_PKG_VERSION").to_string(),
             port: self.config.server_port,
+            extra_info: self.extra_info.lock().unwrap().clone(),
         }
     }
 
@@ -213,6 +218,24 @@ impl HttpTransferService {
             .insert(file_info.file_id.clone(), file_info);
 
         Ok(())
+    }
+
+    /// 设置额外信息
+    pub async fn set_extra_info_internal(&self, extra_info: Option<Value>) -> Result<()> {
+        *self.extra_info.lock().unwrap() = extra_info.clone();
+
+        // 发送事件
+        self.send_event(TransferEvent::ExtraInfoChanged {
+            device_id: self.config.device_id.clone(),
+            extra_info,
+        });
+
+        Ok(())
+    }
+
+    /// 获取额外信息
+    pub async fn get_extra_info_internal(&self) -> Option<Value> {
+        self.extra_info.lock().unwrap().clone()
     }
 }
 
@@ -552,13 +575,14 @@ impl TransferService for HttpTransferService {
             .await
             .map_err(|e| HiveDropError::NetworkError(format!("扫描设备失败: {}", e)))?;
 
-        // 使用设备状态创建DeviceInfo
+        // 使用设备状态创建DeviceInfo，包含extra_info
         let device_info = DeviceInfo {
             device_id: device_status.device_id.clone(),
             address: vec![sender_address.to_string()],
             port,
             is_online: device_status.is_online,
             version: device_status.version.clone(),
+            extra_info: device_status.extra_info.clone(),
         };
 
         // 检查是否已经存在这个设备，并更新地址列表
@@ -577,6 +601,7 @@ impl TransferService for HttpTransferService {
             // 更新在线状态和其他信息
             existing_device.is_online = device_status.is_online;
             existing_device.version = device_status.version.clone();
+            existing_device.extra_info = device_status.extra_info.clone();
 
             // 复制一份用于事件发送
             let updated_device = existing_device.clone();
@@ -615,6 +640,14 @@ impl TransferService for HttpTransferService {
             .collect();
 
         Ok(files)
+    }
+
+    async fn set_extra_info(&self, extra_info: Option<Value>) -> Result<()> {
+        self.set_extra_info_internal(extra_info).await
+    }
+
+    async fn get_extra_info(&self) -> Option<Value> {
+        self.get_extra_info_internal().await
     }
 
     // 实现as_any方法

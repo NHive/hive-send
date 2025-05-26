@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value; // 确保导入 Value
 
 /// 发现等级枚举 - 控制设备在网络中的可见性
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -36,6 +37,9 @@ pub struct DeviceStatusInfo {
     pub version: String,
     /// 服务端口
     pub port: u16,
+    /// 额外信息 (用户自定义JSON数据)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_info: Option<Value>,
 }
 
 /// 实现方:(接收方)

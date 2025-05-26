@@ -11,6 +11,7 @@ use tokio::sync::broadcast;
 use crate::dto::request::*;
 use crate::dto::response::*;
 use crate::types::*;
+use serde_json::Value;
 
 use crate::error::Result;
 use crate::http::HttpTransferService;
@@ -141,6 +142,21 @@ pub trait TransferService: Sync + Send {
     /// # 返回
     /// * `Result<()>` - 操作成功或错误
     async fn set_discovery_level(&self, level: DiscoveryLevel) -> Result<()>;
+
+    /// 设置额外信息
+    ///
+    /// # 参数
+    /// * `extra_info` - 要设置的额外信息 (JSON对象)
+    ///
+    /// # 返回
+    /// * `Result<()>` - 操作成功或错误
+    async fn set_extra_info(&self, extra_info: Option<Value>) -> Result<()>;
+
+    /// 获取额外信息
+    ///
+    /// # 返回
+    /// * `Option<Value>` - 当前的额外信息
+    async fn get_extra_info(&self) -> Option<Value>;
 
     /// 订阅传输事件
     ///

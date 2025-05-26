@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::dto::request::*;
 use crate::dto::response::*;
@@ -64,6 +65,12 @@ pub enum TransferEvent {
 
     /// 发现新设备
     DeviceDiscovered(DeviceInfo),
+
+    /// 额外信息已更改
+    ExtraInfoChanged {
+        device_id: String,
+        extra_info: Option<Value>,
+    },
 }
 
 /// 传输状态枚举 - 表示单个文件传输的状态
@@ -92,6 +99,9 @@ pub struct DeviceInfo {
     pub is_online: bool,
     /// 设备应用版本
     pub version: String,
+    /// 设备额外信息
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_info: Option<Value>,
 }
 
 /// 传输服务实现类型
