@@ -245,7 +245,7 @@ impl TransferService for HttpTransferService {
         &self,
         file_path: &str,
         device_id: &str,
-    ) -> Result<TransferRequestResponse> {
+    ) -> Result<TransferRequest> {
         // 单路径请求直接调用多路径方法
         self.create_transfer_request_by_paths(vec![file_path.to_string()], device_id, None)
             .await
@@ -256,7 +256,7 @@ impl TransferService for HttpTransferService {
         file_paths: Vec<String>,
         device_id: &str,
         excluded_patterns: Option<Vec<String>>,
-    ) -> Result<TransferRequestResponse> {
+    ) -> Result<TransferRequest> {
         let request_id = uuid::Uuid::new_v4().to_string();
         let mut all_files = Vec::new();
 
@@ -304,7 +304,11 @@ impl TransferService for HttpTransferService {
             .await
             .map_err(|e| HiveDropError::NetworkError(format!("发送请求失败: {}", e)))?;
 
-        Ok(response)
+        if response.request_id != request_id {
+            return Err(HiveDropError::ValidationError("请求ID不匹配".to_string()));
+        }
+
+        Ok(request)
     }
 
     async fn accept_transfer_request(

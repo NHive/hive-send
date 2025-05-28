@@ -31,7 +31,7 @@ pub trait TransferService: Sync + Send {
         &self,
         file_path: &str,
         device_id: &str,
-    ) -> Result<TransferRequestResponse>;
+    ) -> Result<TransferRequest>;
 
     /// 通过多个路径创建传输请求 发送方->接收方
     ///
@@ -41,13 +41,13 @@ pub trait TransferService: Sync + Send {
     /// * `excluded_patterns` - 可选的排除模式列表
     ///
     /// # 返回
-    /// * `Result<TransferRequestResponse>` - 创建的传输请求或错误
+    /// * `Result<TransferRequest>` - 创建的传输请求或错误
     async fn create_transfer_request_by_paths(
         &self,
         file_paths: Vec<String>,
         device_id: &str,
         excluded_patterns: Option<Vec<String>>,
-    ) -> Result<TransferRequestResponse>;
+    ) -> Result<TransferRequest>;
 
     /// 接受传输请求 接收方->发送方(并开始传输)
     ///

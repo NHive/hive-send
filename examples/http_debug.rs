@@ -10,7 +10,7 @@ use hive_send::{
     TransferService, create_transfer_service,
     dto::{
         request::TransferRequest,
-        response::{ApiResponse, DeviceStatusInfo, DiscoveryLevel, TransferRequestResponse},
+        response::{ApiResponse, DeviceStatusInfo, DiscoveryLevel},
     },
     types::{
         PendingReceiveFileInfo, PendingSendFileInfo, TransferEvent, TransferImplementation,
@@ -258,7 +258,7 @@ async fn get_sent_requests(
 async fn create_transfer_request(
     State(state): State<AppState>,
     Query(params): Query<CreateRequestQuery>,
-) -> Json<ApiResponse<TransferRequestResponse>> {
+) -> Json<ApiResponse<TransferRequest>> {
     let service = &state.transfer_service;
 
     match service
