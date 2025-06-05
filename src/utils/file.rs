@@ -141,12 +141,12 @@ fn create_dir_info(path: &Path, base_path: &Path) -> Result<PendingSendFileInfo>
         .to_string_lossy()
         .to_string();
 
-    // 计算相对路径，从base_path开始
+    // 计算相对路径，从base_path开始，并统一使用 / 作为分隔符
     let relative_path = path
         .strip_prefix(base_path)
         .unwrap_or(Path::new(&dir_name))
         .to_string_lossy()
-        .to_string();
+        .replace('\\', "/");
 
     // 获取绝对路径
     let absolute_path = path
@@ -179,12 +179,12 @@ fn create_file_info(path: &Path, base_path: &Path) -> Result<PendingSendFileInfo
         .to_string_lossy()
         .to_string();
 
-    // 计算相对路径，从base_path开始
+    // 计算相对路径，从base_path开始，并统一使用 / 作为分隔符
     let relative_path = path
         .strip_prefix(base_path)
         .unwrap_or(Path::new(&file_name))
         .to_string_lossy()
-        .to_string();
+        .replace('\\', "/");
 
     // 获取绝对路径
     let absolute_path = path
