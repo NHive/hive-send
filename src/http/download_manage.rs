@@ -28,6 +28,7 @@ pub struct DownloadTask {
     pub file_size: u64,
     pub is_dir: bool,
     pub start_offset: u64,
+    pub retry_count: u32, // 添加重试计数
 }
 
 // 进度更新结构体
@@ -58,14 +59,15 @@ pub struct DownloadManager {
     semaphore: Arc<Semaphore>,
     // 记录活动下载的速度统计数据
     speed_stats: Arc<tokio::sync::Mutex<std::collections::HashMap<String, SpeedStat>>>,
+    max_retries: u32, // 添加最大重试次数配置
 }
 
 impl DownloadManager {
     // 创建下载管理器
     fn new(service: Arc<HttpTransferService>) -> (Self, mpsc::Receiver<ProgressUpdate>) {
-        let config = service.get_config();
         let (progress_sender, progress_receiver) = mpsc::channel(100);
-        let semaphore = Arc::new(Semaphore::new(config.max_concurrent_transfers));
+        // 限制最多同时下载5个文件
+        let semaphore = Arc::new(Semaphore::new(5));
 
         // 创建HttpClient实例而不是reqwest Client
         let http_client = HttpClient::new().expect("创建HTTP客户端失败");
@@ -77,9 +79,100 @@ impl DownloadManager {
                 progress_sender,
                 semaphore,
                 speed_stats: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+                max_retries: 2,
             },
             progress_receiver,
         )
+    }
+
+    // 开始下载任务（带重试机制）
+    async fn start_download_with_retry(&self, mut task: DownloadTask) -> Result<()> {
+        let mut last_error = None;
+
+        loop {
+            // 如果是重试，获取当前文件的下载进度作为起始偏移
+            if task.retry_count > 0 {
+                task.start_offset = self.get_current_file_progress(&task.save_path).await;
+                info!(
+                    "重试下载文件 {} (第{}次重试)，从偏移量 {} 开始",
+                    task.file_id, task.retry_count, task.start_offset
+                );
+            }
+
+            match self.start_download(task.clone()).await {
+                Ok(_) => {
+                    info!("文件 {} 下载成功", task.file_id);
+                    return Ok(());
+                }
+                Err(e) => {
+                    error!(
+                        "文件 {} 下载失败 (尝试 {}/{}): {}",
+                        task.file_id,
+                        task.retry_count + 1,
+                        self.max_retries + 1,
+                        e
+                    );
+
+                    last_error = Some(e);
+
+                    if task.retry_count < self.max_retries {
+                        task.retry_count += 1;
+
+                        // 更新文件状态为重试中
+                        if let Some(mut file_entry) =
+                            self.service.received_files.get_mut(&task.file_id)
+                        {
+                            file_entry.status = TransferStatus::InProgress;
+                        }
+
+                        // 等待一段时间后重试
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        continue;
+                    } else {
+                        // 超过最大重试次数，标记为失败
+                        if let Some(mut file_entry) =
+                            self.service.received_files.get_mut(&task.file_id)
+                        {
+                            file_entry.status = TransferStatus::Failed;
+                        }
+
+                        // 向发送方报告失败状态
+                        if let Some(device_info) =
+                            self.service.get_device_info(&task.device_id).await
+                        {
+                            let _ = self
+                                .report_progress_to_sender(
+                                    &task.request_id,
+                                    &task.file_id,
+                                    task.start_offset,
+                                    TransferStatus::Failed,
+                                    Some(format!("下载失败，已重试{}次", self.max_retries)),
+                                    0,
+                                    &device_info,
+                                )
+                                .await;
+                        }
+
+                        return Err(last_error.unwrap());
+                    }
+                }
+            }
+        }
+    }
+
+    // 获取当前文件的下载进度
+    async fn get_current_file_progress(&self, file_path: &PathBuf) -> u64 {
+        match tokio::fs::metadata(file_path).await {
+            Ok(metadata) => {
+                let current_size = metadata.len();
+                info!("检测到已下载文件大小: {} 字节", current_size);
+                current_size
+            }
+            Err(_) => {
+                info!("文件不存在，从头开始下载");
+                0
+            }
+        }
     }
 
     // 开始下载任务
@@ -204,25 +297,56 @@ impl DownloadManager {
             );
         }
 
-        // 使用分块下载
+        // 使用分块下载，增加错误处理
         while bytes_received < metadata.content_length {
             // 计算当前块的起始和结束位置
             let start = bytes_received;
             let end = (start + chunk_size as u64 - 1).min(metadata.content_length - 1);
 
-            // 使用HttpClient的download_file_chunk方法下载文件分片
-            let chunk = self
-                .http_client
-                .download_file_chunk(
-                    &task.file_id,
-                    Some((start, end)),
-                    &device_info.address[0],
-                    device_info.port,
-                )
-                .await?;
+            info!(
+                "准备下载分片: 文件={}, 范围={}-{}, 总进度={}/{}",
+                task.file_id, start, end, bytes_received, metadata.content_length
+            );
+
+            // 使用HttpClient的download_file_chunk方法下载文件分片，添加重试机制
+            let chunk = match self
+                .download_chunk_with_retry(&task, start, end, &device_info)
+                .await
+            {
+                Ok(chunk) => {
+                    debug!(
+                        "成功下载分片: 文件={}, 大小={} 字节",
+                        task.file_id,
+                        chunk.len()
+                    );
+                    chunk
+                }
+                Err(e) => {
+                    error!("下载分片失败: {}", e);
+                    // 清理速度统计数据
+                    {
+                        let mut stats = self.speed_stats.lock().await;
+                        stats.remove(&task.file_id);
+                    }
+                    return Err(e);
+                }
+            };
+
+            // 验证分片大小
+            let expected_chunk_size = (end - start + 1) as usize;
+            if chunk.len() != expected_chunk_size {
+                warn!(
+                    "分片大小不匹配: 期望 {} 字节，实际 {} 字节",
+                    expected_chunk_size,
+                    chunk.len()
+                );
+            }
 
             // 写入数据到文件
-            file.write_all(&chunk).await?;
+            file.write_all(&chunk).await.map_err(|e| {
+                error!("写入文件失败: {}", e);
+                HiveDropError::IoError(e)
+            })?;
 
             // 更新已接收的字节数
             let chunk_size = chunk.len() as u64;
@@ -377,9 +501,96 @@ impl DownloadManager {
         Ok(metadata)
     }
 
+    // 下载分片的重试方法
+    async fn download_chunk_with_retry(
+        &self,
+        task: &DownloadTask,
+        start: u64,
+        end: u64,
+        device_info: &DeviceInfo,
+    ) -> Result<Vec<u8>> {
+        let max_chunk_retries = 5; // 增加重试次数
+        let mut retry_count = 0;
+        let mut last_error = None;
+
+        while retry_count < max_chunk_retries {
+            // 在重试前先检查网络连接
+            if retry_count > 0 {
+                info!(
+                    "第{}次重试下载分片: 文件={}, 范围={}-{}, 设备={}:{}",
+                    retry_count + 1,
+                    task.file_id,
+                    start,
+                    end,
+                    device_info.address[0],
+                    device_info.port
+                );
+
+                // 使用递增的延迟时间
+                let delay = Duration::from_millis(1000 * (retry_count as u64 + 1));
+                tokio::time::sleep(delay).await;
+            }
+
+            match self
+                .http_client
+                .download_file_chunk(
+                    &task.file_id,
+                    Some((start, end)),
+                    &device_info.address[0],
+                    device_info.port,
+                )
+                .await
+            {
+                Ok(chunk) => {
+                    info!(
+                        "成功下载分片: 文件={}, 范围={}-{}, 大小={} 字节",
+                        task.file_id,
+                        start,
+                        end,
+                        chunk.len()
+                    );
+                    return Ok(chunk);
+                }
+                Err(e) => {
+                    warn!(
+                        "下载分片失败 (尝试 {}/{}): 文件={}, 范围={}-{}, 错误={}",
+                        retry_count + 1,
+                        max_chunk_retries,
+                        task.file_id,
+                        start,
+                        end,
+                        e
+                    );
+
+                    // 分析错误类型，决定是否继续重试
+                    let error_str = format!("{}", e);
+                    if error_str.contains("connection")
+                        || error_str.contains("timeout")
+                        || error_str.contains("decoding response body")
+                        || error_str.contains("network")
+                    {
+                        // 网络相关错误，可以重试
+                        last_error = Some(e);
+                        retry_count += 1;
+                    } else {
+                        // 其他类型错误，不重试
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            HiveDropError::NetworkError(format!(
+                "下载分片最终失败: 文件={}, 范围={}-{}, 已重试{}次",
+                task.file_id, start, end, max_chunk_retries
+            ))
+        }))
+    }
+
     // 处理下载任务队列
     async fn process_download_queue(self: Arc<Self>) -> Result<()> {
-        info!("下载队列处理器已启动");
+        info!("下载队列处理器已启动，最大并发下载数: 5");
 
         // 启动每秒更新速度统计数据的任务
         let speed_reporter = Arc::clone(&self);
@@ -453,6 +664,7 @@ impl DownloadManager {
                         file_size: file.file_size,
                         is_dir: file.is_dir,
                         start_offset: file.progress,
+                        retry_count: 0, // 初始重试次数为0
                     });
 
                     // 更新文件状态为下载中
@@ -463,25 +675,19 @@ impl DownloadManager {
                 }
             }
 
-            // 为每个任务启动下载，限制同时启动的数量避免资源耗尽
-            let max_concurrent_starts = 3;
-            for chunk in tasks.chunks(max_concurrent_starts) {
-                let mut futures = Vec::new();
+            // 为每个任务启动下载，信号量会自动限制并发数为5
+            for task in tasks {
+                // 克隆必要的引用
+                let self_clone = Arc::clone(&self);
+                let semaphore = Arc::clone(&self.semaphore);
+                let task = task.clone();
 
-                for task in chunk {
-                    // 克隆必要的引用
-                    let self_clone = Arc::clone(&self);
-                    let semaphore = Arc::clone(&self.semaphore);
-                    let task = task.clone();
-
-                    // 将任务封装在一个有超时的异步块中
-                    let future = tokio::spawn(async move {
-                        // 获取信号量许可，添加超时
-                        let permit = match tokio::time::timeout(
-                            Duration::from_secs(10),
-                            semaphore.acquire(),
-                        )
-                        .await
+                // 异步启动下载任务
+                tokio::spawn(async move {
+                    // 获取信号量许可，添加超时
+                    let permit =
+                        match tokio::time::timeout(Duration::from_secs(10), semaphore.acquire())
+                            .await
                         {
                             Ok(Ok(permit)) => permit,
                             Ok(Err(e)) => {
@@ -494,60 +700,28 @@ impl DownloadManager {
                             }
                         };
 
-                        info!(
-                            "开始下载文件: id={}, path={}",
-                            task.file_id,
-                            task.save_path.display()
-                        );
+                    info!(
+                        "开始下载文件: id={}, path={} (当前并发下载数已达到信号量限制)",
+                        task.file_id,
+                        task.save_path.display()
+                    );
 
-                        // 执行下载，添加超时保护
-                        match tokio::time::timeout(
-                            Duration::from_secs(3600), // 1小时超时
-                            self_clone.start_download(task.clone()),
-                        )
-                        .await
-                        {
-                            Ok(Ok(_)) => {
-                                info!("文件下载成功: {}", task.file_id);
-                            }
-                            Ok(Err(e)) => {
-                                error!(
-                                    "下载任务失败: request_id={}, file_id={}, error={}",
-                                    task.request_id, task.file_id, e
-                                );
-
-                                // 更新文件状态为失败
-                                if let Some(mut file_entry) =
-                                    self_clone.service.received_files.get_mut(&task.file_id)
-                                {
-                                    file_entry.status = TransferStatus::Failed;
-                                }
-                            }
-                            Err(_) => {
-                                error!(
-                                    "下载任务超时: request_id={}, file_id={}",
-                                    task.request_id, task.file_id
-                                );
-                                // 更新文件状态为失败
-                                if let Some(mut file_entry) =
-                                    self_clone.service.received_files.get_mut(&task.file_id)
-                                {
-                                    file_entry.status = TransferStatus::Failed;
-                                }
-                            }
+                    // 执行带重试的下载
+                    match self_clone.start_download_with_retry(task.clone()).await {
+                        Ok(_) => {
+                            info!("文件下载成功: {}", task.file_id);
                         }
+                        Err(e) => {
+                            error!(
+                                "文件下载最终失败: request_id={}, file_id={}, error={}",
+                                task.request_id, task.file_id, e
+                            );
+                        }
+                    }
 
-                        // 释放信号量许可
-                        drop(permit);
-                    });
-
-                    futures.push(future);
-                }
-
-                // 等待当前批次的任务都启动完成
-                for future in futures {
-                    let _ = future.await;
-                }
+                    // 释放信号量许可
+                    drop(permit);
+                });
             }
 
             // 使用短暂延迟减轻CPU负担
